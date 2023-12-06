@@ -1,0 +1,201 @@
+---
+title: "reviewanalyss"
+
+output: html_document
+date: "2023-12-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r }
+library(tidyverse) #  data manipulation and graphs
+library(stringr) #  string manipulation
+library(lubridate) #  date manipulation
+library('wordcloud') #  wordcloud
+library(tidytext) # tidy implementation of NLP methods
+library(DT)       # table format display of data
+library(leaflet) # maps
+
+library(igraph) #  graphs
+library(ggraph) #  graphs
+
+library(topicmodels) # for LDA topic modelling 
+library(tm) # general text mining functions, making document term matrixes
+library(SnowballC) # for stemming
+
+library(textcat)
+
+reviews <- read_csv("C:/Users/SHerlock/Downloads/yelp_Fall2023/yelp_Fall2023/coffee_review_merge.csv")
+head(reviews)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+# function to get & plot the most informative terms by a specificed number
+# of topics, using LDA
+top_terms_by_topic_LDA <- function(input_text, # should be a columm from a dataframe
+                                   plot = T, # return a plot? TRUE by defult
+                                   number_of_topics = 4) # number of topics (4 by default)
+{    
+    # create a corpus (type of object expected by tm) and document term matrix
+    Corpus <- Corpus(VectorSource(input_text)) # make a corpus object
+    DTM <- DocumentTermMatrix(Corpus) # get the count of words/document
+
+    # remove any empty rows in our document term matrix (if there are any 
+    # we'll get an error when we try to run our LDA)
+    unique_indexes <- unique(DTM$i) # get the index of each unique value
+    DTM <- DTM[unique_indexes,] # get a subset of only those indexes
+    
+    # preform LDA & get the words/topic in a tidy text format
+    lda <- LDA(DTM, k = number_of_topics, control = list(seed = 1234))
+    topics <- tidy(lda, matrix = "beta")
+    topics$topic <- sub('1','customer loyalty',topics$topic)
+    topics$topic <- sub('2','service attitude',topics$topic)
+    topics$topic <- sub('3','environment',topics$topic)
+    topics$topic <- sub('4','food quality',topics$topic)
+    
+
+    # get the top ten terms for each topic
+    top_terms <- topics  %>% # take the topics data frame and..
+      group_by(topic) %>% # treat each topic as a different group
+      top_n(10, beta) %>% # get the top 10 most informative words
+      ungroup() %>% # ungroup
+      arrange(topic, -beta) # arrange words in descending informativeness
+
+    # if the user asks for a plot (TRUE by default)
+    if(plot == T){
+        # plot the top ten terms for each topic in order
+        top_terms %>% # take the top terms
+          mutate(term = reorder(term, beta)) %>% # sort terms by beta value 
+          ggplot(aes(term, beta, fill = factor(topic))) + # plot beta by theme
+          geom_col(show.legend = FALSE) + # as a bar plot
+          facet_wrap(~ topic, scales = "free") + # which each topic in a seperate plot
+          labs(x = NULL, y = "Beta") + # no x label, change y label 
+          coord_flip() # turn bars sideways
+    }else{ 
+        # if the user does not request a plot
+        # return a list of sorted terms instead
+        return(top_terms)
+    }
+}
+```
+
+
+```{r pressure, echo=FALSE}
+create_LDA_topics <- function(business_text,custom_stop_words)
+{
+  # create a document term matrix to clean
+reviewsCorpus <- Corpus(VectorSource(business_text$text)) 
+reviewsDTM <- DocumentTermMatrix(reviewsCorpus)
+
+# convert the document term matrix to a tidytext corpus
+reviewsDTM_tidy <- tidy(reviewsDTM)
+
+# remove stopwords
+reviewsDTM_tidy_cleaned <- reviewsDTM_tidy %>% # take our tidy dtm and...
+    anti_join(stop_words, by = c("term" = "word")) %>% # remove English stopwords and...
+    anti_join(custom_stop_words, by = c("term" = "word")) # remove my custom stopwords
+
+top_terms_by_topic_LDA(reviewsDTM_tidy_cleaned$term, number_of_topics = 4)
+
+}
+
+
+
+custom_stop_words <- tibble(word = c("restaurant","food","Chinese","coffee,","coffee","tea","breakfast","sandwich","it."))
+create_LDA_topics(reviews,custom_stop_words)
+```
+```{r}
+createWordCloud = function(train)
+{
+  train %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word) %>%
+  count(word,sort = TRUE) %>%
+  ungroup()  %>%
+  head(30) %>%
+  
+  with(wordcloud(word, n, max.words = 30,colors=brewer.pal(8, "Dark2")))
+}
+
+createWordCloud(reviews)
+```
+
+
+```{r pressure, echo=FALSE}
+positiveWordsBarGraph <- function(SC) {
+  contributions <- SC %>%
+    unnest_tokens(word, text) %>%
+    count(word,sort = TRUE) %>%
+    ungroup() %>%
+    
+    inner_join(get_sentiments("afinn"), by = "word") %>%
+    group_by(word) %>%
+    summarize(occurences = n(),
+              contribution = sum(value))
+  
+  contributions %>%
+    top_n(20, abs(contribution)) %>%
+    mutate(word = reorder(word, contribution)) %>%
+    head(20) %>%
+    ggplot(aes(word, contribution, fill = contribution > 0)) +
+    geom_col(show.legend = FALSE) +
+    coord_flip() + theme_bw()
+}
+
+positiveWordsBarGraph(reviews)
+```
+```{r}
+
+positiveWordsBarGraph(reviews%>%filter(stars_y<=2))
+```
+
+
+```{r pressure, echo=FALSE}
+ calculate_sentiment <- function(review_text)
+{
+  sentiment_lines  =  review_text %>%
+                  filter(textcat(text) == "english") %>%  # considering only English text
+                  unnest_tokens(word, text) %>%
+                  inner_join(get_sentiments("afinn"), by = "word") %>%
+                  group_by(review_id) %>%
+                  summarize(sentiment = mean(value),words = n()) %>%
+                  ungroup() %>%
+                  filter(words >= 5) 
+
+  return(sentiment_lines)
+  
+}
+
+
+sentiment_lines = calculate_sentiment(reviews%>%filter(business_id =="VFrmNGmPK-8UsDAXlxX-CQ"))
+
+head(sentiment_lines)
+```
+```{r}
+display_neg_sentiments <- function(sentiment_lines,review_text)
+{
+  neg_sentiment_lines = sentiment_lines %>%
+  arrange(desc(sentiment))  %>%
+  top_n(-5, sentiment) %>%
+  inner_join(review_text, by = "review_id") %>%
+  select(date,sentiment,text) 
+  
+datatable(neg_sentiment_lines, style="bootstrap", class="table-condensed", options = list(dom = 'tp',scrollX = TRUE))
+}
+
+display_neg_sentiments(sentiment_lines,reviews%>%filter(business_id =="VFrmNGmPK-8UsDAXlxX-CQ"))
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
