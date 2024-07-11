@@ -5,7 +5,7 @@ There are 3 folders providing more details for our main project: Data, Code, Gra
 #Authors
 Zongliang Han: zhan226@wisc.edu
 Ziyi Yang: zyang622@wisc.edu
-Chuyi Lin: clin@395@wisc.edu
+Chuyi Lin: clin395@wisc.edu
 
 Link to shiny app: https://exiarose.shinyapps.io/shiny_coffee/
 
